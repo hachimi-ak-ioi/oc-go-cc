@@ -306,15 +306,17 @@ func (t *RequestTransformer) transformMessages(anthropicReq *types.MessageReques
 
 	var result []types.ChatMessage
 
-	// Add system message if present, preserving cache_control if available
+	// Add system message from top-level field if present, preserving cache_control.
+	// DeepSeek V3.x / V4 reorders all system-role messages to the front internally.
+	// When Claude Code injects periodic system reminders mid-conversation, any
+	// extra {"role": "system"} in the messages array would shift every subsequent
+	// user/assistant/tool message after the reorder, blowing the prefix cache.
 	systemText := anthropicReq.SystemText()
 	if systemText != "" {
 		systemMsg := types.ChatMessage{
 			Role:    "system",
 			Content: contentText(systemText),
 		}
-		// Try to extract cache_control from system array blocks
-		// Kimi models reject cache_control, skip for those.
 		if !strings.HasPrefix(modelID, "kimi-") && len(anthropicReq.System) > 0 {
 			var blocks []types.SystemContentBlock
 			if err := json.Unmarshal(anthropicReq.System, &blocks); err == nil {
@@ -329,8 +331,47 @@ func (t *RequestTransformer) transformMessages(anthropicReq *types.MessageReques
 		result = append(result, systemMsg)
 	}
 
-	// Transform each message
+	// Transform remaining messages.
+	//
+	// DeepSeek V3.x / V4 internally reorders all system-role messages to the
+	// front of the effective prompt.  When Claude Code injects periodic system
+	// reminders mid-conversation (e.g. "task tools haven't been used recently"),
+	// forwarding them as {"role": "system"} would cause DeepSeek's reordering
+	// to shift every user/assistant/tool message, invalidating the prefix cache
+	// from the insertion point onward.
+	//
+	// For DeepSeek models only, convert non-top-level system messages into user
+	// messages wrapped in <system-reminder> tags.  This preserves the semantic
+	// intent while preventing DeepSeek from reordering them past the
+	// conversational history.
+	rewriteSystem := isDeepSeekModel(modelID)
 	for _, msg := range anthropicReq.Messages {
+		if msg.Role == "system" && rewriteSystem {
+			blocks := msg.ContentBlocks()
+			var sb strings.Builder
+			for _, b := range blocks {
+				if b.Type == "text" {
+					sb.WriteString(b.Text)
+				}
+			}
+			text := sb.String()
+			if text == "" {
+				continue
+			}
+			// Deduplicate: skip if this text is already part of the top-level
+			// system prompt (matched after trimming whitespace on both sides).
+			if canonicalSystem := strings.TrimSpace(systemText); canonicalSystem != "" {
+				canonicalText := strings.TrimSpace(text)
+				if strings.Contains(canonicalSystem, canonicalText) {
+					continue
+				}
+			}
+			result = append(result, types.ChatMessage{
+				Role:    "user",
+				Content: contentText("<system-reminder>\n" + text + "\n</system-reminder>"),
+			})
+			continue
+		}
 		openaiMsgs, err := t.transformMessage(msg, modelID, hasThinking, vision)
 		if err != nil {
 			return nil, err
