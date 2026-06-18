@@ -45,6 +45,8 @@ func (t *RequestTransformer) TransformToGemini(
 				textParts = append(textParts, block.Text)
 			case "image":
 				textParts = append(textParts, "[Image]")
+			case "tool_use":
+				textParts = append(textParts, fmt.Sprintf("[Tool: %s(%s)]", block.Name, string(block.Input)))
 			case "tool_result":
 				toolContent := block.TextContent()
 				contents = append(contents, types.GeminiContent{
