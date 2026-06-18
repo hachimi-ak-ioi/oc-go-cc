@@ -3,6 +3,7 @@ package transformer
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"oc-go-cc/internal/config"
 	"oc-go-cc/pkg/types"
@@ -56,10 +57,11 @@ func (t *RequestTransformer) TransformToGemini(
 		}
 
 		if len(textParts) > 0 {
-			text := ""
+			var sb strings.Builder
 			for _, p := range textParts {
-				text += p
+				sb.WriteString(p)
 			}
+			text := sb.String()
 			role := "user"
 			if msg.Role == "assistant" {
 				role = "model"

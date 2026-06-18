@@ -2,6 +2,7 @@ package transformer
 
 import (
 	"encoding/json"
+	"strings"
 
 	"oc-go-cc/internal/config"
 	"oc-go-cc/pkg/types"
@@ -47,10 +48,11 @@ func (t *RequestTransformer) TransformToResponses(
 		}
 
 		if len(textParts) > 0 {
-			text := ""
+			var sb strings.Builder
 			for _, p := range textParts {
-				text += p
+				sb.WriteString(p)
 			}
+			text := sb.String()
 			content, _ := json.Marshal(text)
 			input = append(input, types.ResponsesInput{
 				Role:    msg.Role,
